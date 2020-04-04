@@ -1,6 +1,6 @@
-# popkey
+# PopKey
 
-PopKey gives you a static key-value storage structure backed by poppy indices. Construction is slow (multiple passes are made over the data to choose a good indexing structure), but querying should be fast, and space overhead should be much lower than Data.Map—on the data set I'm working with, Data.Map has 8.3x more overhead than PopKey—and the raw data transparently lives in an mmap'd region if you use @storage@, meaning the actual memory needed for usage is very low.
+PopKey gives you a static key-value storage structure backed by poppy indices. Construction is slow (multiple passes are made over the data to choose a good indexing structure), but querying should be fast, and space overhead should be much lower than Data.Map—on the data set I'm working with, Data.Map has 8.3x more overhead than PopKey—and the raw data transparently lives in an mmap'd region if you use `storage`, meaning the actual memory needed for usage is very low.
 
 To construct, you will need `PopKeyEncoding` instances. You may choose the granularity by which you encode your data types by choosing one of two auto-deriving patterns. The first, implicitly derived via GHC Generics, will use a granular encoding, indexing fields separately internally, while the second, derived via the `StoreBlob` newtype, will encode the data as a single unit. Which is better depends on the situation, but as a general rule you should pack your constant-size structures into a single blob while letting your variable-sized fields use the granular encoding.
 
