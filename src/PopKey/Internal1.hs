@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK hide #-}
+
 module PopKey.Internal1 where
 
 import Control.Monad.ST

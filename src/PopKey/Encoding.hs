@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_HADDOCK hide #-}
 
 module PopKey.Encoding where
 

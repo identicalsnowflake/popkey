@@ -1,5 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
+{-# OPTIONS_HADDOCK hide #-}
+
 module PopKey.Internal3 where
 
 import qualified Data.ByteString as BS
