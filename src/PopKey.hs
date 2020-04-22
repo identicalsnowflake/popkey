@@ -40,7 +40,7 @@
 module PopKey
        ( type PopKey
        , module PopKey
-       , type StoreBlob
+       , StoreBlob(..)
        , PopKeyEncoding
        , PopKeyStore
        , PopKeyStore'
