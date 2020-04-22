@@ -1,4 +1,4 @@
-cabal-version:       3.0
+cabal-version:       2.4
 name:                popkey
 version:             0.0.0.1
 synopsis:            Static key-value storage backed by poppy
