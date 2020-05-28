@@ -36,10 +36,19 @@
 -- @
 --
 -- Poppy natively supports array-style indexing, so if your "key" set is simply the dense set of integers  @[ 0 .. n - 1 ]@ where @n@ is the number of items in your data set, key storage may be left implicit and elided entirely. In this API, when the distinction is necessary, working with such an implicit index is signified by a trailing ', e.g., @storage@ vs @storage'@.
+--
+-- Note that constant-factor space & time overhead is fairly high, so unless you have at least a couple thousand items, it is recommended to avoid PopKey. Once you have 10k+ items, the asymptotics should win out, and PopKey should perform well.
 
 module PopKey
        ( type PopKey
-       , module PopKey
+       , (!)
+       , PopKey.lookup
+       , makePopKey
+       , makePopKey'
+       , foldrWithKey
+       , foldlWithKey'
+       , storage
+       , storage'
        , StoreBlob(..)
        , PopKeyEncoding
        , PopKeyStore
@@ -47,9 +56,7 @@ module PopKey
        , StorePopKey(..)
        ) where
 
-import Data.Bifunctor
 import qualified Data.ByteString as BS
-import Data.List (sortOn)
 import Data.Store (encode , decodeEx)
 import GHC.Word
 import HaskellWorks.Data.FromForeignRegion
@@ -62,60 +69,23 @@ import PopKey.Encoding
 
 {-# INLINE (!) #-}
 -- | Lookup by a key known to be in the structure.
-(!) :: PopKey k v -> k -> v
-(!) (PopKeyInt p vd ke) k = vd do rawq (ke k) p
-(!) (PopKeyAny pv vd ke pk) k =
-  vd do rawq (bin_search2 pk (ke k) 0 (flength pk - 1)) pv
+(!) :: PopKeyEncoding k => PopKey k v -> k -> v
+(!) (PopKeyInt _ p vd) k = vd do rawq k p
+(!) (PopKeyAny _ pv vd pk) k =
+  vd do rawq (bin_search2 pk (pkEncode k) 0 (flength pk - 1)) pv
 
 {-# INLINE lookup #-}
 -- | Lookup by a key which may or may not be in the structure.
-lookup :: PopKey k v -> k -> Maybe v
-lookup s@(PopKeyInt p vd ke) (ke -> i) = if i >= 0 && i < length s
+lookup :: PopKeyEncoding k => PopKey k v -> k -> Maybe v
+lookup s@(PopKeyInt _ p vd) i = if i >= 0 && i < length s
   then Just (vd do rawq i p)
   else Nothing
-lookup (PopKeyAny pv vd ke pk) k = do
-  let i = bin_search2 pk (ke k) 0 (flength pk - 1)
+lookup (PopKeyAny _ pv vd pk) k = do
+  let i = bin_search2 pk (pkEncode k) 0 (flength pk - 1)
   if i == -1
      then Nothing
      else Just (vd do rawq i pv)
 
-{-# INLINE makePopKey #-}
--- | Create a poppy-backed key-value storage structure.
-makePopKey :: forall f k v . (Foldable f , PopKeyEncoding k , PopKeyEncoding v) => f (k , v) -> PopKey k v
-makePopKey =
-  makePopKeyWithEncoding (shape @k) (pkEncode @k) (shape @v) (pkEncode @v) (pkDecode @v)
-  where
-    makePopKeyWithEncoding :: Foldable f
-                           => I s1 -> (k -> F' s1 BS.ByteString)
-                           -> I s2 -> (v -> F' s2 BS.ByteString) -> (F' s2 BS.ByteString -> v)
-                           -> f (k , v)
-                           -> PopKey k v
-    makePopKeyWithEncoding ik ek iv ev dv xs = do
-      let (ks , vs) = unzip (lastv $ sortOn fst (foldr ((:) . first ek) [] xs))
-      PopKeyAny do construct iv ev vs
-                do dv
-                do ek
-                do construct ik id ks
-      where
-        -- for duplicate keys, use the last value
-        lastv :: forall a b . Ord a => [(a,b)] -> [(a,b)]
-        lastv [] = []
-        lastv [ x ] = [ x ]
-        lastv (x : ys@(y : _)) =
-          if fst x == fst y
-             then lastv ys
-             else x : lastv ys
-
--- | Create a poppy-backed structure with elements implicitly indexed by their position.
-{-# INLINE makePopKey' #-}
-makePopKey' :: forall f v . (Foldable f , PopKeyEncoding v) => f v -> PopKey Int v
-makePopKey' = go (shape @v) (pkEncode @v) (pkDecode @v) . foldr (:) []
-  where
-    go :: I s -> (a -> F' s BS.ByteString) -> (F' s BS.ByteString -> a) -> [ a ] -> PopKey Int a
-    go i e d xs =
-      PopKeyInt do construct i e xs
-                do d
-                do id
 
 -- | You may use @storage@ to gain a pair of operations to serialize and read your structure from disk. This will be more efficient than if you naively serialize and store the data, as it strictly reads index metadata into memory while leaving the larger raw chunks to be backed by mmap.
 storage :: (PopKeyEncoding k , PopKeyEncoding v)

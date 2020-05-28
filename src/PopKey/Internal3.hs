@@ -4,12 +4,15 @@
 
 module PopKey.Internal3 where
 
+import Data.Bifunctor
 import qualified Data.ByteString as BS
+import Data.Functor.Contravariant
 import HaskellWorks.Data.RankSelect.CsPoppy
 import qualified HaskellWorks.Data.RankSelect.CsPoppy.Internal.Alpha0 as A0
 import qualified HaskellWorks.Data.RankSelect.CsPoppy.Internal.Alpha1 as A1
-import Data.Profunctor
-import Data.Store (encode , decodeEx)
+import Data.Foldable
+import Data.List (sortOn)
+import Data.Store
 import GHC.Generics hiding (R)
 import GHC.Word
 import Unsafe.Coerce
@@ -19,28 +22,49 @@ import PopKey.Internal2
 import PopKey.Encoding
 
 
-data PopKey k v =
-    forall s . PopKeyInt !(F s PKPrim) (F' s BS.ByteString -> v) (k -> Int)
-  | forall s1 s2 . PopKeyAny !(F s1 PKPrim) (F' s1 BS.ByteString -> v) (k -> F' s2 BS.ByteString) !(F s2 PKPrim)
+-- Bool here is whether the decoding function is the canonical decoding function from when
+-- the index was first built. it allows the Store instance to skip re-building the structure
+-- before serialization. the Functor instance should still be observably-valid from the safe public API,
+-- at least modulo bottoms and the fact that mapping the identity will cause performance artefacts.
+data PopKey k v where
+  PopKeyInt :: forall s v . Bool -> F s PKPrim -> (F' s BS.ByteString -> v) -> PopKey Int v
+  PopKeyAny :: forall s k v . Bool -> F s PKPrim -> (F' s BS.ByteString -> v) -> F (Shape k) PKPrim -> PopKey k v
 
 instance Functor (PopKey k) where
   {-# INLINE fmap #-}
-  fmap f (PopKeyInt p d e) = PopKeyInt p (f . d) e
-  fmap f (PopKeyAny pv d e pk) = PopKeyAny pv (f . d) e pk
-
-instance Profunctor PopKey where
-  {-# INLINE dimap #-}
-  dimap f g (PopKeyInt p d e) = PopKeyInt p (g . d) (e . f)
-  dimap f g (PopKeyAny pv d e pk) = PopKeyAny pv (g . d) (e . f) pk
+  fmap f (PopKeyInt _ p d) = PopKeyInt False p (f . d)
+  fmap f (PopKeyAny _ pv d pk) = PopKeyAny False pv (f . d) pk
 
 instance Foldable (PopKey k) where
   {-# INLINE foldr #-}
-  foldr f z p@(PopKeyInt pr vd _) = foldr (\i -> f (vd do rawq i pr)) z [ 0 .. (length p - 1) ]
-  foldr f z p@(PopKeyAny pr vd _ _) = foldr (\i -> f (vd do rawq i pr)) z [ 0 .. (length p - 1) ]
+  foldr f z p@(PopKeyInt _ pr vd) = foldr (\i -> f (vd do rawq i pr)) z [ 0 .. (length p - 1) ]
+  foldr f z p@(PopKeyAny _ pr vd _) = foldr (\i -> f (vd do rawq i pr)) z [ 0 .. (length p - 1) ]
 
   {-# INLINE length #-}
-  length (PopKeyInt p _ _) = flength p
+  length (PopKeyInt _ p _) = flength p
   length (PopKeyAny _ _ _ p) = flength p
+
+{-# INLINABLE foldrWithKey #-}
+foldrWithKey :: PopKeyEncoding k => (k -> v -> b -> b) -> b -> PopKey k v -> b
+foldrWithKey f z p@(PopKeyInt _ pr vd) =
+  foldr do \i -> f i (vd do rawq i pr)
+        do z
+        do [ 0 .. (length p - 1) ]
+foldrWithKey f z p@(PopKeyAny _ pr vd pk) =
+  foldr do \i -> f (pkDecode $ rawq i pk) (vd do rawq i pr)
+        do z
+        do [ 0 .. (length p - 1) ]
+
+{-# INLINABLE foldlWithKey' #-}
+foldlWithKey' :: PopKeyEncoding k => (a -> k -> v -> a) -> a -> PopKey k v -> a
+foldlWithKey' f z p@(PopKeyInt _ pr vd) =
+  foldl' do \a i -> f a i (vd do rawq i pr)
+         do z
+         do [ 0 .. (length p - 1) ]
+foldlWithKey' f z p@(PopKeyAny _ pr vd pk) =
+  foldl' do \a i -> f a (pkDecode $ rawq i pk) (vd do rawq i pr)
+         do z
+         do [ 0 .. (length p - 1) ]  
 
 -------------------------------------------
 -- PopKey serialization for mmap loading --
@@ -109,21 +133,6 @@ instance BiSerialize CsPoppy where
     let (a01 , a02 , a11 , a12) = decodeEx bs
     CsPoppy (decodeEx bv) (A0.CsPoppyIndex a01 a02) (A1.CsPoppyIndex a11 a12)
 
--- newtype L a = L a deriving (Generic)
--- newtype R a = R a deriving (Generic)
-
--- instance Store a => BiSerialize (L a) where
---   {-# INLINE bencode #-}
---   bencode (L x) = (encode x , mempty)
---   {-# INLINE bdecode #-}
---   bdecode (b , _) = L do decodeEx b
-
--- instance Store a => BiSerialize (R a) where
---   {-# INLINE bencode #-}
---   bencode (R x) = (mempty , encode x)
---   {-# INLINE bdecode #-}
---   bdecode (_ , b) = R do decodeEx b
-
 instance BiSerialize BS.ByteString where
   {-# INLINE bencode #-}
   bencode x = (mempty , x)
@@ -178,16 +187,80 @@ data SPopKey k v =
   deriving (Generic,BiSerialize)
 
 toSPopKey :: PopKey k v -> SPopKey k v
-toSPopKey (PopKeyInt p _ _) = SPopKeyInt (fromF p)
-toSPopKey (PopKeyAny p1 _ _ p2) = SPopKeyAny (fromF p1) (fromF p2)
+toSPopKey (PopKeyInt _ p _) = SPopKeyInt (fromF p)
+toSPopKey (PopKeyAny _ p1 _ p2) = SPopKeyAny (fromF p1) (fromF p2)
 
 fromSPopKey :: forall k v . (PopKeyEncoding k , PopKeyEncoding v) => SPopKey k v -> PopKey k v
-fromSPopKey (SPopKeyInt p) = PopKeyInt (toF p) (pkDecode @v) (unsafeCoerce id)
-fromSPopKey (SPopKeyAny pv pk) = PopKeyAny (toF pv) (pkDecode @v) (pkEncode @k) (toF pk)
+fromSPopKey (SPopKeyInt p) = unsafeCoerce (PopKeyInt True (toF p) (pkDecode @v))
+fromSPopKey (SPopKeyAny pv pk) = PopKeyAny True (toF pv) (pkDecode @v) (toF pk)
 
 fromSPopKey' :: PopKeyEncoding v => SPopKey Int v -> PopKey Int v
-fromSPopKey' (SPopKeyInt p) = PopKeyInt (toF p) pkDecode (unsafeCoerce id)
+fromSPopKey' (SPopKeyInt p) = PopKeyInt True (toF p) pkDecode
 fromSPopKey' _ = error "Incorrect PopKey type: expected Int."
+
+-- re-encode using whatever the current value encoding is
+{-# INLINABLE normalise #-}
+normalise :: (PopKeyEncoding k , PopKeyEncoding v) => PopKey k v -> PopKey k v
+normalise p@(PopKeyInt True _ _) = p
+normalise p@(PopKeyInt _ _ _) =
+  makePopKey' (toList p)
+normalise p@(PopKeyAny True _ _ _) = p
+normalise p@(PopKeyAny _ _ _ _) =
+  makePopKey (foldrWithKey (\k v -> (:) (k,v)) [] p)
+
+toStoreEnc :: (PopKeyEncoding k , PopKeyEncoding v) => PopKey k v -> (Bool , BS.ByteString , BS.ByteString)
+toStoreEnc (normalise -> p) = do
+  let (b1 , b2) = bencode (toSPopKey p)
+  case p of
+    PopKeyInt _ _ _ -> (True , b1 , b2)
+    PopKeyAny _ _ _ _ -> (False , b1 , b2)
+
+fromStoreEnc :: forall k v . (PopKeyEncoding k , PopKeyEncoding v) => (Bool , BS.ByteString , BS.ByteString) -> PopKey k v
+fromStoreEnc (True , b1 , b2) = unsafeCoerce (fromSPopKey' (bdecode (b1 , b2) :: SPopKey Int v))
+fromStoreEnc (False , b1 , b2) = fromSPopKey (bdecode (b1 , b2))
+
+instance (PopKeyEncoding k , PopKeyEncoding v) => Store (PopKey k v) where
+  size = contramap toStoreEnc size
+  peek = fmap fromStoreEnc peek
+  poke = poke . toStoreEnc
+
+{-# INLINE makePopKey #-}
+-- | Create a poppy-backed key-value storage structure.
+makePopKey :: forall f k v . (Foldable f , PopKeyEncoding k , PopKeyEncoding v) => f (k , v) -> PopKey k v
+makePopKey =
+  makePopKeyWithEncoding (shape @k) (shape @v) (pkEncode @v) (pkDecode @v)
+  where
+    makePopKeyWithEncoding :: Foldable f
+                           => I (Shape k)
+                           -> I s -> (v -> F' s BS.ByteString) -> (F' s BS.ByteString -> v)
+                           -> f (k , v)
+                           -> PopKey k v
+    makePopKeyWithEncoding ik iv ev dv xs = do
+      let (ks , vs) = unzip (lastv $ sortOn fst (foldr ((:) . first pkEncode) [] xs))
+      PopKeyAny do True
+                do construct iv ev vs
+                do dv
+                do construct ik id ks
+      where
+        -- for duplicate keys, use the last value
+        lastv :: forall a b . Ord a => [(a,b)] -> [(a,b)]
+        lastv [] = []
+        lastv [ x ] = [ x ]
+        lastv (x : ys@(y : _)) =
+          if fst x == fst y
+             then lastv ys
+             else x : lastv ys
+
+-- | Create a poppy-backed structure with elements implicitly indexed by their position.
+{-# INLINE makePopKey' #-}
+makePopKey' :: forall f v . (Foldable f , PopKeyEncoding v) => f v -> PopKey Int v
+makePopKey' = go (shape @v) (pkEncode @v) (pkDecode @v) . foldr (:) []
+  where
+    go :: I s -> (a -> F' s BS.ByteString) -> (F' s BS.ByteString -> a) -> [ a ] -> PopKey Int a
+    go i e d xs =
+      PopKeyInt do True
+                do construct i e xs
+                do d
 
 data PopKeyStore k v =
   PopKeyStore (forall f . Foldable f => f (k , v) -> IO ())
