@@ -62,10 +62,10 @@ rawq i = go
     go (Single pk) = Single' (pkIndex pk i)
     go (Prod x y) = Prod' (go x) (go y)
     go (Sum _ pk l r) = do
-      let b1pos = fromIntegral i + 1
-      if pk .?. b1pos
-         then Sum' (Right (rawq (fromIntegral (rank1 pk (fromIntegral b1pos) - 1)) r))
-         else Sum' (Left (rawq (fromIntegral (rank0 pk (fromIntegral b1pos) - 1)) l))
+      let b1pos = fromIntegral i
+      if pk .?. b1pos -- nasty! this uses 0-based indexing, while rank/select use 1-based indexing
+         then Sum' (Right (rawq (fromIntegral (rank1 pk (fromIntegral b1pos))) r))
+         else Sum' (Left (rawq (fromIntegral (rank0 pk (fromIntegral b1pos))) l))
 
 -- returns @-1@ if not found
 {-# INLINABLE bin_search2 #-}
@@ -123,12 +123,12 @@ construct = \s e f -> if length f == 0
             v <- MUV.new l
 
             for_ (zip [ 0 .. ] zs) \(i,x) -> case x of
-              Left _ -> pure ()
+              Left _ -> MUV.unsafeWrite v i 0
               Right _ -> MUV.unsafeWrite v i 1
 
             UV.unsafeFreeze v
 
-          uv64 :: UV.Vector Word64 = unsafeCoerce do cloneToWords bv
+          uv64 :: UV.Vector Word64 = unsafeCoerce do cloneToWords $ bv
           sv64 :: SV.Vector Word64 = SV.convert uv64
 
           !(ppy :: CsPoppy) = makeCsPoppy sv64

@@ -1,6 +1,6 @@
 cabal-version:       2.4
 name:                popkey
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            Static key-value storage backed by poppy
 description:         Static key-value storage backed by poppy.
 homepage:            https://github.com/identicalsnowflake/popkey

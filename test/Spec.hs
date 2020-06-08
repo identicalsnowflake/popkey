@@ -19,7 +19,7 @@ main = hspec $ do
     it "sanity checks for fixed-size data" $ property \(xs :: [ Int ]) ->
       toList (scode $ fmap (+1) $ makePopKey' xs) == fmap (+1) xs
 
-    it "sanity checks for fixed-size data" $ property \(xs :: [ (Int , Word8) ]) ->
+    it "sanity checks for fixed-size data" $ property \(xs :: [ (Int , Maybe Word8) ]) ->
       toList (scode $ makePopKey' xs) == xs
 
     it "sanity checks for var-size data" $ property \(xs :: [ [ Int ] ]) ->

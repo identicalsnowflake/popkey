@@ -99,7 +99,7 @@ instance (GPopKeyEncoding s a , GPopKeyEncoding s b) => GPopKeyEncoding s (a :+:
   gpkEncode (L1 x) = Sum' (Left (gpkEncode @s x))
   gpkEncode (R1 x) = Sum' (Right (gpkEncode @s x))
   {-# INLINE gpkDecode #-}
-  gpkDecode (Sum' x)= case x of
+  gpkDecode (Sum' x) = case x of
     Left l -> L1 (gpkDecode @s l)
     Right r -> R1 (gpkDecode @s r)
 
