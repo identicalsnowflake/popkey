@@ -262,12 +262,6 @@ makePopKey' = go (shape @v) (pkEncode @v) (pkDecode @v) . foldr (:) []
                 do construct i e xs
                 do d
 
-check :: Bool
-check = toList (makePopKey' dat) == dat
-  where
-    dat :: [ Maybe Int ]
-    dat = [ Just 3 , Nothing , Just 1 ]
-
 data PopKeyStore k v =
   PopKeyStore (forall f . Foldable f => f (k , v) -> IO ())
               (IO (PopKey k v))
